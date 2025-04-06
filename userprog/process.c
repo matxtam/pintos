@@ -62,6 +62,55 @@ process_execute (const char *file_name)
 // lab01 Hint - This is the mainly function you have to trace.
 static void push_argument(void **esp, char *cmdline)
 {
+	// esp: stack pointer
+	// *esp: the value inside the stack 
+	// cmdline: the arguments
+
+	int i = 0;
+
+	// find number of arguments (argc)
+	for(int j=0; j<strlen(cmdline); j++){
+		if(cmdline[j] == ' ')i++;
+	}
+
+	int argc = i+1;
+	char *argv[i+1];
+
+	char *token;
+  char *save_ptr;
+
+	// push arguments
+	token = strtok_r(cmdline, " ", &save_ptr);
+	while(token != NULL){
+		*esp -= strlen(token)+1;
+		memcpy(*esp, token, strlen(token)+1);
+		argv[i] = *esp; i--;
+		token = strtok_r(NULL, " ", &save_ptr);
+	}
+
+	// word align
+	*esp -= ((unsigned)*esp % 4);
+
+	// push argument address
+	*esp -= sizeof(char *);
+	memcpy(*esp, 0, sizeof(char *));
+	for (i=0; i<argc; i++){
+		*esp -= sizeof(char *);
+		memcpy(*esp, &argv[i], sizeof(char *));
+	}	
+	// push argv
+	*esp -= 4;
+	memcpy(*esp, *esp+sizeof(char **), sizeof(char **));
+
+	// push argc
+	*esp -= sizeof(int);
+	* (uint32_t *) *esp = 0;
+	// * (uint32_t *) *esp = argc;
+
+	// push fake return address
+	*esp -= 4;
+	* (uint32_t *) *esp = 0x0;
+
 
 }
 
