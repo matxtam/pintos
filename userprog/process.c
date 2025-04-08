@@ -18,10 +18,18 @@
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 #include "threads/malloc.h"
+#include "threads/synch.h"
 
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
 static void push_argument(void **esp, char *cmdline);
+
+	// new struct for process_execute semaphore
+	struct exec_args{
+		char *file_name;
+		struct semaphore load_sema;
+		bool load_success;
+	};
 
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
@@ -30,31 +38,54 @@ static void push_argument(void **esp, char *cmdline);
 tid_t
 process_execute (const char *file_name) 
 {
+	printf("process executing...\n");
   char *fn_copy, *fn_copy2;
   tid_t tid;
+
+	struct exec_args *args = malloc(sizeof(struct exec_args));
+	if (args == NULL) return TID_ERROR;
+
 
   /* Make a copy of FILE_NAME.
     Otherwise there's a race between the caller and load(). */
   fn_copy = malloc(strlen(file_name)+1);
-  fn_copy2 = malloc(strlen(file_name)+1);
+  // fn_copy2 = malloc(strlen(file_name)+1);
+  args->file_name	= malloc(strlen(file_name)+1);
+	
   if (fn_copy == NULL)
     return TID_ERROR;
 
   strlcpy (fn_copy, file_name, strlen(file_name)+1);
-  strlcpy (fn_copy2, file_name, strlen(file_name)+1);
+  // strlcpy (fn_copy2, file_name, strlen(file_name)+1);
+  strlcpy (args->file_name, file_name, strlen(file_name)+1);
+	
+	// init semaphore
+	sema_init(&args->load_sema, 0);
+	args->load_success = false;
 
 
   /* Create a new thread to execute FILE_NAME. */
   char *save_ptr;
   fn_copy = strtok_r(fn_copy, " ", &save_ptr);
 
-  tid = thread_create(fn_copy, PRI_DEFAULT, start_process, fn_copy2);
+  //tid = thread_create(fn_copy, PRI_DEFAULT, start_process, fn_copy2);
+  tid = thread_create(fn_copy, PRI_DEFAULT, start_process, args);
   free(fn_copy);
 
   if (tid == TID_ERROR){
-    free (fn_copy2); 
+    // free (fn_copy2); 
+		free(args->file_name);
+		free(args);
     return TID_ERROR;
   }
+
+	// wait for child to load
+	sema_down(&args->load_sema);
+	bool success = args->load_success;
+	free(args->file_name);
+	free(args);
+	if(!success) return TID_ERROR;
+	
 
   return tid;
 }
@@ -62,6 +93,7 @@ process_execute (const char *file_name)
 // lab01 Hint - This is the mainly function you have to trace.
 static void push_argument(void **esp, char *cmdline)
 {
+	printf("pushing arguments...\n");
 	// esp: stack pointer
 	// *esp: the value inside the stack 
 	// cmdline: the arguments
@@ -69,7 +101,7 @@ static void push_argument(void **esp, char *cmdline)
 	int i = 0;
 
 	// find number of arguments (argc)
-	for(int j=0; j<strlen(cmdline); j++){
+	for(size_t j=0; j<strlen(cmdline); j++){
 		if(cmdline[j] == ' ')i++;
 	}
 
@@ -93,7 +125,9 @@ static void push_argument(void **esp, char *cmdline)
 
 	// push argument address
 	*esp -= sizeof(char *);
-	memcpy(*esp, 0, sizeof(char *));
+	// memcpy(*esp, 0, sizeof(char *));
+	*(char **)*esp = NULL;
+
 	for (i=0; i<argc; i++){
 		*esp -= sizeof(char *);
 		memcpy(*esp, &argv[i], sizeof(char *));
@@ -116,9 +150,13 @@ static void push_argument(void **esp, char *cmdline)
 
 /* A thread function that loads a user process and starts it
    running. */
-static void start_process (void *file_name_)
+//static void start_process (void *file_name_)
+static void start_process (void *args_)
 {
-  char *file_name = file_name_;
+	printf("start process...\n");
+	struct exec_args *args = args_;
+
+  char *file_name = args->file_name;
   struct intr_frame if_;
   bool success;
 
@@ -134,10 +172,14 @@ static void start_process (void *file_name_)
 
   char *save_ptr;
   file_name = strtok_r(file_name, " ", &save_ptr);
+	printf("before load\n");
   success = load (file_name, &if_.eip, &if_.esp);
+	printf("after load\n");
   if(success)
   {
     push_argument (&if_.esp, fn_copy);
+		args->load_success = success;
+		sema_up(&args->load_sema);
   }else
   {
     /* If load failed, quit. */
@@ -154,6 +196,7 @@ static void start_process (void *file_name_)
      and jump to it. */
   asm volatile ("movl %0, %%esp; jmp intr_exit" : : "g" (&if_) : "memory");
   NOT_REACHED ();
+
 }
 
 
@@ -290,6 +333,7 @@ static bool load_segment (struct file *file, off_t ofs, uint8_t *upage,
 bool
 load (const char *file_name, void (**eip) (void), void **esp) 
 {
+	printf("enter load\n");
   struct thread *t = thread_current ();
   struct Elf32_Ehdr ehdr;
   struct file *file = NULL;
