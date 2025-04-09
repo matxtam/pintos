@@ -38,8 +38,9 @@ static void push_argument(void **esp, char *cmdline);
 tid_t
 process_execute (const char *file_name) 
 {
-	printf("process executing...\n");
-  char *fn_copy, *fn_copy2;
+	// printf("process executing...\n");
+  // char *fn_copy, *fn_copy2;
+	char *fn_copy;
   tid_t tid;
 
 	struct exec_args *args = malloc(sizeof(struct exec_args));
@@ -93,20 +94,14 @@ process_execute (const char *file_name)
 // lab01 Hint - This is the mainly function you have to trace.
 static void push_argument(void **esp, char *cmdline)
 {
-	printf("pushing arguments...\n");
+	// printf("pushing arguments...\n");
 	// esp: stack pointer
 	// *esp: the value inside the stack 
 	// cmdline: the arguments
 
-	int i = 0;
 
-	// find number of arguments (argc)
-	for(size_t j=0; j<strlen(cmdline); j++){
-		if(cmdline[j] == ' ')i++;
-	}
-
-	int argc = i+1;
-	char *argv[i+1];
+	int argc = 0;
+	char *argv[32];
 
 	char *token;
   char *save_ptr;
@@ -116,29 +111,31 @@ static void push_argument(void **esp, char *cmdline)
 	while(token != NULL){
 		*esp -= strlen(token)+1;
 		memcpy(*esp, token, strlen(token)+1);
-		argv[i] = *esp; i--;
+		argv[argc++] = *esp;
 		token = strtok_r(NULL, " ", &save_ptr);
 	}
 
 	// word align
-	*esp -= ((unsigned)*esp % 4);
+	int total = PHYS_BASE - *esp;
+	*esp -= 8 + total%4;
 
 	// push argument address
 	*esp -= sizeof(char *);
 	// memcpy(*esp, 0, sizeof(char *));
 	*(char **)*esp = NULL;
 
-	for (i=0; i<argc; i++){
+	for (int i=argc-1; i>=0; i--){
 		*esp -= sizeof(char *);
 		memcpy(*esp, &argv[i], sizeof(char *));
 	}	
+
 	// push argv
-	*esp -= 4;
-	memcpy(*esp, *esp+sizeof(char **), sizeof(char **));
+	*esp -= sizeof(char *);
+	* (char **) *esp = *esp + sizeof(char *);
 
 	// push argc
 	*esp -= sizeof(int);
-	* (uint32_t *) *esp = 0;
+	* (int *) *esp = argc;
 	// * (uint32_t *) *esp = argc;
 
 	// push fake return address
@@ -153,7 +150,7 @@ static void push_argument(void **esp, char *cmdline)
 //static void start_process (void *file_name_)
 static void start_process (void *args_)
 {
-	printf("start process...\n");
+	// printf("start process...\n");
 	struct exec_args *args = args_;
 
   char *file_name = args->file_name;
@@ -172,9 +169,7 @@ static void start_process (void *args_)
 
   char *save_ptr;
   file_name = strtok_r(file_name, " ", &save_ptr);
-	printf("before load\n");
   success = load (file_name, &if_.eip, &if_.esp);
-	printf("after load\n");
   if(success)
   {
     push_argument (&if_.esp, fn_copy);
@@ -183,6 +178,7 @@ static void start_process (void *args_)
   }else
   {
     /* If load failed, quit. */
+		printf("load failed\n");
     thread_exit ();
   }
 
@@ -308,7 +304,7 @@ struct Elf32_Phdr
 /* Values for p_type.  See [ELF1] 2-3. */
 #define PT_NULL    0            /* Ignore. */
 #define PT_LOAD    1            /* Loadable segment. */
-#define PT_DYNAMIC 2            /* Dynamic linking info. */
+#define PT_DYNAMIC 2            /* Dynamic linking info. */ 
 #define PT_INTERP  3            /* Name of dynamic loader. */
 #define PT_NOTE    4            /* Auxiliary info. */
 #define PT_SHLIB   5            /* Reserved. */
@@ -333,7 +329,6 @@ static bool load_segment (struct file *file, off_t ofs, uint8_t *upage,
 bool
 load (const char *file_name, void (**eip) (void), void **esp) 
 {
-	printf("enter load\n");
   struct thread *t = thread_current ();
   struct Elf32_Ehdr ehdr;
   struct file *file = NULL;
