@@ -18,95 +18,205 @@
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 #include "threads/malloc.h"
+#include "threads/synch.h"
 
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
 static void push_argument(void **esp, char *cmdline);
 
+	// new struct for process_execute semaphore
+	struct exec_args{
+		char *file_name;
+		struct semaphore load_sema;
+		bool load_success;
+	};
+
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
    before process_execute() returns.  Returns the new process's
    thread id, or TID_ERROR if the thread cannot be created. */
-tid_t
-process_execute (const char *file_name) 
-{
-  char *fn_copy, *fn_copy2;
-  tid_t tid;
+tid_t process_execute(const char *file_name) {
+    // printf("process executing...\n");
 
-  /* Make a copy of FILE_NAME.
-    Otherwise there's a race between the caller and load(). */
-  fn_copy = malloc(strlen(file_name)+1);
-  fn_copy2 = malloc(strlen(file_name)+1);
-  if (fn_copy == NULL)
-    return TID_ERROR;
+    tid_t tid;
+    char *fn_copy = malloc(strlen(file_name) + 1);
+    if (fn_copy == NULL) return TID_ERROR;
+    strlcpy(fn_copy, file_name, strlen(file_name) + 1);
 
-  strlcpy (fn_copy, file_name, strlen(file_name)+1);
-  strlcpy (fn_copy2, file_name, strlen(file_name)+1);
+    struct exec_args *args = malloc(sizeof(struct exec_args));
+    if (args == NULL) {
+        free(fn_copy);
+        return TID_ERROR;
+    }
 
+    args->file_name = malloc(strlen(file_name) + 1);
+    if (args->file_name == NULL) {
+        free(fn_copy);
+        free(args);
+        return TID_ERROR;
+    }
 
-  /* Create a new thread to execute FILE_NAME. */
-  char *save_ptr;
-  fn_copy = strtok_r(fn_copy, " ", &save_ptr);
+    strlcpy(args->file_name, file_name, strlen(file_name) + 1);
+    sema_init(&args->load_sema, 0);
+    args->load_success = false;
 
-  tid = thread_create(fn_copy, PRI_DEFAULT, start_process, fn_copy2);
-  free(fn_copy);
+    char *save_ptr;
+    /*
+    char *thread_name = strtok_r(fn_copy, " ", &save_ptr);
 
-  if (tid == TID_ERROR){
-    free (fn_copy2); 
-    return TID_ERROR;
-  }
+    tid = thread_create(thread_name, PRI_DEFAULT, start_process, args);
+    */
+    char *token = strtok_r(fn_copy, " ", &save_ptr);
 
-  return tid;
+    // 限制 thread_name 最多15字元
+    char thread_name[16];
+    strlcpy(thread_name, token, sizeof(thread_name));
+
+    tid = thread_create(thread_name, PRI_DEFAULT, start_process, args);
+    free(fn_copy);
+
+    if (tid == TID_ERROR) {
+        free(args->file_name);
+        free(args);
+        return TID_ERROR;
+    }
+
+    sema_down(&args->load_sema);
+    bool success = args->load_success;
+
+    free(args->file_name);
+    free(args);
+
+    return success ? tid : TID_ERROR;
 }
 
 // lab01 Hint - This is the mainly function you have to trace.
 static void push_argument(void **esp, char *cmdline)
 {
+  static char *argv[32];
+  int argc = 0;
+  char *token, *save_ptr;
 
+  // 1. 逐一把 token 複製到 stack，並記錄其指標
+  for (token = strtok_r(cmdline, " ", &save_ptr); token != NULL;
+       token = strtok_r(NULL, " ", &save_ptr)) {
+    *esp -= strlen(token) + 1;
+    memcpy(*esp, token, strlen(token) + 1);
+    argv[argc++] = *esp;
+  }
+
+  // 2. 調整 esp 至 4 字節對齊（word align）
+  uintptr_t esp_val = (uintptr_t)(*esp);
+  uint32_t pad = (4 - (esp_val % 4)) % 4;
+  if (pad != 0) {
+    *esp -= pad;
+    memset(*esp, 0, pad);
+  }
+
+  // 3. 推入 NULL 來作為 argv[argc] 的結尾
+  *esp -= sizeof(void *);
+  *(void **)*esp = NULL;
+
+  // 4. 依序（反向）推入每個 argv 指標
+  for (int i = argc - 1; i >= 0; i--) {
+    *esp -= sizeof(char *);
+    *(char **)*esp = argv[i];
+  }
+
+  // 5. 推入 argv 指標（即 argv[0] 的位址）
+  char **argv_addr = (char **)*esp;
+  *esp -= sizeof(char **);
+  *(char ***)*esp = argv_addr;
+
+  // 6. 推入 argc
+  *esp -= sizeof(int);
+  *(int *)*esp = argc;
+
+  // 7. 最後推入虛假的 return address (NULL)
+  *esp -= sizeof(void *);
+  *(void **)*esp = NULL;
 }
 
-/* A thread function that loads a user process and starts it
-   running. */
-static void start_process (void *file_name_)
-{
-  char *file_name = file_name_;
+
+//static void start_process (void *file_name_)
+static void start_process(void *args_) {
+  // printf("[DEBUG] start_process() is called\n");
+  struct exec_args *args = args_;
+  if (args == NULL || args->file_name == NULL) {
+    printf("[DEBUG] args or file_name is NULL!\n");
+    thread_exit();
+  }
+  
+  char *file_name = malloc(strlen(args->file_name) + 1);
+  if (file_name == NULL) {
+      args->load_success = false;
+      sema_up(&args->load_sema);
+      thread_exit();
+  }
+  strlcpy(file_name, args->file_name, strlen(args->file_name) + 1);
+  
   struct intr_frame if_;
   bool success;
 
+  // Step 1: 兩份備份（給 strtok 和 argv 用）
   char *fn_copy = malloc(strlen(file_name) + 1);
-  strlcpy(fn_copy, file_name, strlen(file_name) + 1);
+  char *cmdline_copy = malloc(strlen(file_name) + 1);
 
-  /* Initialize interrupt frame and load executable. */
-  memset (&if_, 0, sizeof if_);
+  if (fn_copy == NULL || cmdline_copy == NULL) {
+    args->load_success = false;
+    sema_up(&args->load_sema);
+    thread_exit();
+  }
+
+  strlcpy(fn_copy, file_name, strlen(file_name) + 1);
+  strlcpy(cmdline_copy, file_name, strlen(file_name) + 1);
+
+  // Step 2: 初始化中斷架構
+  memset(&if_, 0, sizeof if_);
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
 
-
+  // Step 3: 擷取可執行檔名給 load
   char *save_ptr;
-  file_name = strtok_r(file_name, " ", &save_ptr);
-  success = load (file_name, &if_.eip, &if_.esp);
-  if(success)
-  {
-    push_argument (&if_.esp, fn_copy);
-  }else
-  {
-    /* If load failed, quit. */
-    thread_exit ();
+  char *program = strtok_r(fn_copy, " ", &save_ptr);
+
+  // printf("[DEBUG] before load(%s)\n", program);
+  success = load(program, &if_.eip, &if_.esp);
+  // printf("[DEBUG] after load. success = %d, esp = %p\n", success, if_.esp);
+
+  if (!success) {
+    args->load_success = false;
+    sema_up(&args->load_sema);
+    free(fn_copy);
+    free(cmdline_copy);
+    thread_exit();
   }
 
-  free(fn_copy);
-  
-  /* Start the user process by simulating a return from an
-     interrupt, implemented by intr_exit (in
-     threads/intr-stubs.S).  Because intr_exit takes all of its
-     arguments on the stack in the form of a `struct intr_frame',
-     we just point the stack pointer (%esp) to our stack frame
-     and jump to it. */
-  asm volatile ("movl %0, %%esp; jmp intr_exit" : : "g" (&if_) : "memory");
-  NOT_REACHED ();
-}
+  // Step 4: 壓參數進 stack（用完整 cmdline）
+  // printf("[DEBUG] Calling push_argument(cmdline_copy = \"%s\")\n", cmdline_copy);
+  push_argument(&if_.esp, cmdline_copy);
+  // printf("[DEBUG] After push_argument, esp = %p\n", if_.esp);
 
+  // Step 5: 報告成功、釋放空間
+  args->load_success = true;
+  sema_up(&args->load_sema);
+
+  free(fn_copy);
+  free(cmdline_copy);
+
+  // Step 6: 跳轉到 user program 執行
+  // printf("[DEBUG] about to jump to user process...\n");
+  asm volatile (
+    "movl %0, %%esp\n"
+    "jmp intr_exit\n"
+    :
+    : "g" (&if_)
+    : "memory"
+  );
+
+  NOT_REACHED();
+}
 
 
 /* Waits for thread TID to die and returns its exit status.  If
@@ -241,6 +351,7 @@ static bool load_segment (struct file *file, off_t ofs, uint8_t *upage,
 bool
 load (const char *file_name, void (**eip) (void), void **esp) 
 {
+	// printf("enter load\n");
   struct thread *t = thread_current ();
   struct Elf32_Ehdr ehdr;
   struct file *file = NULL;
@@ -258,7 +369,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
   file = filesys_open (file_name);
   if (file == NULL) 
     {
-      printf ("load: %s: open failed\n", file_name);
+      printf("[DEBUG] filesys_open failed for %s\n", file_name);
       goto done; 
     }
 
@@ -271,7 +382,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
       || ehdr.e_phentsize != sizeof (struct Elf32_Phdr)
       || ehdr.e_phnum > 1024) 
     {
-      printf ("load: %s: error loading executable\n", file_name);
+      // printf ("load: %s: error loading executable\n", file_name);
       goto done; 
     }
 
@@ -336,8 +447,11 @@ load (const char *file_name, void (**eip) (void), void **esp)
     }
 
   /* Set up stack. */
-  if (!setup_stack (esp))
-    goto done;
+  // printf("[DEBUG] calling setup_stack...\n");
+  if (!setup_stack (esp)) {
+      // printf("[DEBUG] setup_stack failed!\n");
+      goto done;
+  }
 
   /* Start address. */
   *eip = (void (*) (void)) ehdr.e_entry;
@@ -460,23 +574,32 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 
 /* Create a minimal stack by mapping a zeroed page at the top of
    user virtual memory. */
-static bool
-setup_stack (void **esp) 
-{
-  uint8_t *kpage;
-  bool success = false;
-
-  kpage = palloc_get_page (PAL_USER | PAL_ZERO);
-  if (kpage != NULL) 
-    {
-      success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
-      if (success)
-        *esp = PHYS_BASE;
-      else
-        palloc_free_page (kpage);
-    }
-  return success;
-}
+   static bool
+   setup_stack (void **esp) 
+   {
+     uint8_t *kpage;
+     bool success = false;
+   
+     kpage = palloc_get_page (PAL_USER | PAL_ZERO);
+     if (kpage != NULL) 
+       {
+        //  printf("[DEBUG] Got user page at %p\n", kpage);
+         success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
+         if (success) {
+           *esp = PHYS_BASE;
+          //  printf("[DEBUG] install_page success. esp = %p\n", *esp);
+         }
+         else {
+          //  printf("[DEBUG] install_page FAILED!\n");
+           palloc_free_page (kpage);
+         }
+       }
+     else {
+      //  printf("[DEBUG] palloc_get_page returned NULL!\n");
+     }
+     return success;
+   }
+   
 
 /* Adds a mapping from user virtual address UPAGE to kernel
    virtual address KPAGE to the page table.

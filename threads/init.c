@@ -134,6 +134,8 @@ main (void)
 
   /* Finish up. */
   shutdown ();
+  filesys_done();
+
   thread_exit ();
 }
 
