@@ -171,7 +171,6 @@ thread_create (const char *name, int priority,
   struct switch_entry_frame *ef;
   struct switch_threads_frame *sf;
   tid_t tid;
-
   ASSERT (function != NULL);
 
   /* Allocate thread. */
@@ -467,6 +466,8 @@ init_thread (struct thread *t, const char *name, int priority)
   old_level = intr_disable ();
   list_push_back (&all_list, &t->allelem);
   intr_set_level (old_level);
+  memset(t->fd_table, 0, sizeof(t->fd_table));
+
 }
 
 /* Allocates a SIZE-byte frame at the top of thread T's stack and

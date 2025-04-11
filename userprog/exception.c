@@ -4,6 +4,7 @@
 #include "userprog/gdt.h"
 #include "threads/interrupt.h"
 #include "threads/thread.h"
+void terminate_with_status(int status);
 
 /* Number of page faults processed. */
 static long long page_fault_cnt;
@@ -156,6 +157,8 @@ page_fault (struct intr_frame *f)
           not_present ? "not present" : "rights violation",
           write ? "writing" : "reading",
           user ? "user" : "kernel");
-  kill (f);
+  //kill (f);
+  terminate_with_status(-1);
+
 }
 
