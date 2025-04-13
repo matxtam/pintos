@@ -37,6 +37,9 @@ static struct thread *initial_thread;
 /* Lock used by allocate_tid(). */
 static struct lock tid_lock;
 
+/* Lock for file system. */
+static struct lock filesys_lock;
+
 /* Stack frame for kernel_thread(). */
 struct kernel_thread_frame 
   {
@@ -70,6 +73,8 @@ static void *alloc_frame (struct thread *, size_t size);
 static void schedule (void);
 void thread_schedule_tail (struct thread *prev);
 static tid_t allocate_tid (void);
+void filesys_lock_acquire (void);
+void filesys_lock_release (void);
 
 /* Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
@@ -90,6 +95,7 @@ thread_init (void)
   ASSERT (intr_get_level () == INTR_OFF);
 
   lock_init (&tid_lock);
+	lock_init (&filesys_lock);
   list_init (&ready_list);
   list_init (&all_list);
 
@@ -181,6 +187,14 @@ thread_create (const char *name, int priority,
   /* Initialize thread. */
   init_thread (t, name, priority);
   tid = t->tid = allocate_tid ();
+
+	// lab01: init child.
+	t->tchild = malloc(sizeof(struct child));
+	t->tchild->tid = tid;
+	sema_init(&t->tchild->sema, 0);
+	list_push_back(&thread_current()->child_list, &t->tchild->elem);
+	t->tchild->exit_status = UINT32_MAX;
+	t->tchild->isRunning = false;
 
   /* Stack frame for kernel_thread(). */
   kf = alloc_frame (t, sizeof *kf);
@@ -284,6 +298,10 @@ thread_exit (void)
 #ifdef USERPROG
   process_exit ();
 #endif
+
+	// lab01: sema up the child 
+	thread_current()->tchild->exit_status = thread_current()->exit_status;
+	sema_up(&thread_current()->tchild->sema);
 
   /* Remove thread from all threads list, set our status to dying,
      and schedule another process.  That process will destroy us
@@ -463,6 +481,10 @@ init_thread (struct thread *t, const char *name, int priority)
   t->priority = priority;
   t->magic = THREAD_MAGIC;
 
+	// lab01: child list init
+	list_init(&t->child_list);
+	t->exit_status = UINT32_MAX;
+
   old_level = intr_disable ();
   list_push_back (&all_list, &t->allelem);
   intr_set_level (old_level);
@@ -583,3 +605,15 @@ allocate_tid (void)
 /* Offset of `stack' member within `struct thread'.
    Used by switch.S, which can't figure it out on its own. */
 uint32_t thread_stack_ofs = offsetof (struct thread, stack);
+
+void
+filesys_lock_acquire ()
+{
+	lock_acquire (&filesys_lock);
+}
+
+void
+filesys_lock_release ()
+{
+	lock_release (&filesys_lock);
+}

@@ -4,6 +4,8 @@
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
+#include <stdlib.h>
+#include <threads/synch.h>
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -80,6 +82,17 @@ typedef int tid_t;
    only because they are mutually exclusive: only a thread in the
    ready state is on the run queue, whereas only a thread in the
    blocked state is on a semaphore wait list. */
+
+struct child
+ {
+		tid_t tid;
+		int exit_status;
+		struct semaphore sema;
+		struct list_elem elem;
+		bool isRunning;
+	};
+
+
 struct thread
   {
     /* Owned by thread.c. */
@@ -104,6 +117,12 @@ struct thread
 
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
+
+
+		/* implementation of lab01 */
+		struct list child_list;
+		struct child *tchild;
+		
   };
 
 /* If false (default), use round-robin scheduler.
@@ -141,5 +160,9 @@ int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
+
+
+void filesys_lock_acquire (void);
+void filesys_lock_release (void);
 
 #endif /* threads/thread.h */

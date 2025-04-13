@@ -39,55 +39,62 @@ tid_t process_execute(const char *file_name) {
     // printf("process executing...\n");
 
     tid_t tid;
+
+		// a copy of file_name
     char *fn_copy = malloc(strlen(file_name) + 1);
     if (fn_copy == NULL) return TID_ERROR;
     strlcpy(fn_copy, file_name, strlen(file_name) + 1);
 
+		// args for start_process
     struct exec_args *args = malloc(sizeof(struct exec_args));
     if (args == NULL) {
         free(fn_copy);
         return TID_ERROR;
     }
 
+		// copy file name for args
     args->file_name = malloc(strlen(file_name) + 1);
     if (args->file_name == NULL) {
         free(fn_copy);
         free(args);
         return TID_ERROR;
     }
-
     strlcpy(args->file_name, file_name, strlen(file_name) + 1);
+
+		// initiate sema for loading
     sema_init(&args->load_sema, 0);
     args->load_success = false;
 
-    char *save_ptr;
+		// Find thread name.
     /*
     char *thread_name = strtok_r(fn_copy, " ", &save_ptr);
-
     tid = thread_create(thread_name, PRI_DEFAULT, start_process, args);
     */
+    char *save_ptr;
     char *token = strtok_r(fn_copy, " ", &save_ptr);
-
-    // 限制 thread_name 最多15字元
-    char thread_name[16];
+    char thread_name[16]; // up to 15 characters for thread_name.
     strlcpy(thread_name, token, sizeof(thread_name));
 
+		// create thread of start_process.
     tid = thread_create(thread_name, PRI_DEFAULT, start_process, args);
     free(fn_copy);
-
     if (tid == TID_ERROR) {
         free(args->file_name);
         free(args);
         return TID_ERROR;
     }
 
+		// start sema for loading
     sema_down(&args->load_sema);
+		// wait for load to be done... so that we can free args etc.
+		// load is inside start_process.
     bool success = args->load_success;
 
     free(args->file_name);
     free(args);
 
-    return success ? tid : TID_ERROR;
+		return success ? tid : TID_ERROR;
+
 }
 
 // lab01 Hint - This is the mainly function you have to trace.
@@ -138,15 +145,17 @@ static void push_argument(void **esp, char *cmdline)
 }
 
 
-//static void start_process (void *file_name_)
 static void start_process(void *args_) {
   // printf("[DEBUG] start_process() is called\n");
+
+	// store a copy of args
   struct exec_args *args = args_;
   if (args == NULL || args->file_name == NULL) {
     printf("[DEBUG] args or file_name is NULL!\n");
     thread_exit();
   }
-  
+ 
+	// store a copy of file_name
   char *file_name = malloc(strlen(args->file_name) + 1);
   if (file_name == NULL) {
       args->load_success = false;
@@ -154,7 +163,7 @@ static void start_process(void *args_) {
       thread_exit();
   }
   strlcpy(file_name, args->file_name, strlen(args->file_name) + 1);
-  
+ 
   struct intr_frame if_;
   bool success;
 
@@ -228,11 +237,34 @@ static void start_process(void *args_) {
 
    This function will be implemented in problem 2-2.  For now, it
    does nothing. */
-   int
-   process_wait (tid_t child_tid UNUSED) 
-   {
-     return -1;
-   }
+int
+process_wait (tid_t child_tid) 
+{
+	struct thread *cur = thread_current();
+
+  struct list_elem *e;
+
+  for (e = list_begin(&cur->child_list);
+			e != list_end(&cur->child_list);
+			e = list_next(e)) {
+    struct child *_child = list_entry(e, struct child, elem);
+    if (_child->tid == child_tid) {
+
+      if (_child->isRunning) return -1;
+
+				_child->isRunning = true;
+				sema_down(&_child->sema);
+
+				int status = _child->exit_status;
+				list_remove(e);
+				free(_child);
+				return status;
+      }
+    }
+
+    return -1;
+
+}
 
 /* Free the current process's resources. */
 void

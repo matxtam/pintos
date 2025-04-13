@@ -91,6 +91,7 @@ static void syscall_handler (struct intr_frame *f) {
   check_address((int *)f->esp);  // Also ensure we can safely dereference syscall number
 
   int syscall_number = *(int*)(f->esp);
+	// printf("syscall nu: %d\n", syscall_number);
   if (syscall_number >= 0 && syscall_number < MAX_SYSCALL && syscalls[syscall_number]) {
     syscalls[syscall_number](f);
   } else {
@@ -141,7 +142,10 @@ void sys_write(struct intr_frame *f) {
       terminate_with_status(-1);
       //f->eax = -1;
     } else {
+			// printf("[DEBUG] syswrite to file");
+			filesys_lock_acquire ();
       f->eax = file_write(file, buffer, size);
+			filesys_lock_release ();
     }
   } else {
     f->eax = -1;
@@ -204,14 +208,19 @@ void sys_create(struct intr_frame* f) {
   check_string(file_ptr);                                // 檢查檔名指標是否有效（結尾 '\0'）
 
   check_address(f->esp + 8);                             // 檢查 size 的位置也別忘了
+
   unsigned initial_size = *(unsigned *)(f->esp + 8);
+
+	filesys_lock_acquire();
   f->eax = filesys_create(file_ptr, initial_size);
-  if (f->eax) {
+  /*if (f->eax) {
     struct file *temp = filesys_open(file_ptr);
     if (temp != NULL) {
       file_close(temp);
     }
-  }
+  }*/
+	filesys_lock_release();
+	// printf("file created\n");
 }
 
 
@@ -253,7 +262,7 @@ void sys_open(struct intr_frame *f) {
     f->eax = -1;  
     return;
   }
-  printf("[debug] open: fd = %d, file = %p, filename = %s\n", fd, file, filename);  // ✅ fd 現在是合法的變數了
+  // printf("[debug] open: fd = %d, file = %p, filename = %s\n", fd, file, filename);  // ✅ fd 現在是合法的變數了
 
   f->eax = fd;
 }
