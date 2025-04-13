@@ -132,9 +132,9 @@ document loadusersymbols
         loadusersymbols tests/userprog/exec-multiple
 end
 
-define debugpintos
+define asdf
     target remote localhost:1234
 end
-document debugpintos
+document asdf
     Attach debugger to pintos process
 end

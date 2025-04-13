@@ -1,3 +1,7 @@
+# copy this file
+# replace "<Your/Path/pintos>" with proper path
+# save as "docker-compose.yaml"
+
 version: '3.8'
 
 services:
@@ -8,6 +12,6 @@ services:
     tty: true         
     restart: no       
     volumes:
-      - C:\Users\Heather\MU\Codes\pintos:/home/pintos
+      - <Your/Path/pintos>:/home/pintos
     environment:
       - PINTOS_DIR=/home/pintos
