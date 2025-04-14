@@ -174,8 +174,12 @@ static void start_process(void *args_) {
   if (fn_copy == NULL || cmdline_copy == NULL) {
     args->load_success = false;
     sema_up(&args->load_sema);
+    free(file_name);
+    if (fn_copy) free(fn_copy);
+    if (cmdline_copy) free(cmdline_copy);
     thread_exit();
   }
+  
 
   strlcpy(fn_copy, file_name, strlen(file_name) + 1);
   strlcpy(cmdline_copy, file_name, strlen(file_name) + 1);
@@ -197,6 +201,7 @@ static void start_process(void *args_) {
   if (!success) {
     args->load_success = false;
     sema_up(&args->load_sema);
+    free(file_name);
     free(fn_copy);
     free(cmdline_copy);
     thread_exit();
@@ -401,10 +406,11 @@ load (const char *file_name, void (**eip) (void), void **esp)
   file = filesys_open (file_name);
   if (file == NULL) 
     {
-      printf("[DEBUG] filesys_open failed for %s\n", file_name);
+      //printf("[DEBUG] filesys_open failed for %s\n", file_name);
       goto done; 
     }
-
+  /* Deny write for the opened file by calling file deny write */
+  file_deny_write(file);
   /* Read and verify executable header. */
   if (file_read (file, &ehdr, sizeof ehdr) != sizeof ehdr
       || memcmp (ehdr.e_ident, "\177ELF\1\1\1", 7)
