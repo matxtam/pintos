@@ -92,37 +92,44 @@ struct child
 		bool isRunning;
 	};
 
+struct thread_file {
+   int fd;
+   struct file *file;
+   struct list_elem file_elem;
+   };
 
-struct thread
-  {
-    /* Owned by thread.c. */
-    tid_t tid;                          /* Thread identifier. */
-    int exit_status; 
-    enum thread_status status;          /* Thread state. */
-    char name[16];                      /* Name (for debugging purposes). */
-    uint8_t *stack;                     /* Saved stack pointer. */
-    int priority;                       /* Priority. */
-    struct list_elem allelem;           /* List element for all threads list. */
+struct thread {
+   /* Owned by thread.c. */
+   tid_t tid;                          /* Thread identifier. */
+   int exit_status; 
+   enum thread_status status;          /* Thread state. */
+   char name[16];                      /* Name (for debugging purposes). */
+   uint8_t *stack;                     /* Saved stack pointer. */
+   int priority;                       /* Priority. */
+   struct list_elem allelem;           /* List element for all threads list. */
 
-    /* Shared between thread.c and synch.c. */
-    struct list_elem elem;              /* List element. */
-
-#ifdef USERPROG
-    /* Owned by userprog/process.c. */
-    uint32_t *pagedir;                  /* Page directory. */
-    #define MAX_FD 128
-    struct file *fd_table[MAX_FD];     /* File descriptor table. */
-
-#endif
-
-    /* Owned by thread.c. */
-    unsigned magic;                     /* Detects stack overflow. */
+   /* Shared between thread.c and synch.c. */
+   struct list_elem elem;              /* List element. */
 
 
-		/* implementation of lab01 */
-		struct list child_list;
-		struct child *tchild;
-		
+   /* Owned by userprog/process.c. */
+   uint32_t *pagedir;                  /* Page directory. */
+   #define MAX_FD 128
+   struct file *fd_table[MAX_FD];     /* File descriptor table. */
+
+
+    
+   /* Owned by thread.c. */
+   unsigned magic;                     /* Detects stack overflow. */
+
+
+   /* implementation of lab01 */
+   struct list child_list;
+   struct child *tchild;
+   
+   struct list files;   // list of struct thread_file
+   int file_fd;         // 用於分配新的 fd
+   struct file * file_owned;           /* The file opened */
   };
 
 /* If false (default), use round-robin scheduler.

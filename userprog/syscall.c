@@ -33,26 +33,47 @@ void sys_seek(struct intr_frame* f);
 void sys_tell(struct intr_frame* f);
 void sys_close(struct intr_frame* f);
 void terminate_with_status(int status);
+int allocate_fd(struct file *file);
+
 
 // Helper function to handle fatal errors with exit(-1)
 void terminate_with_status(int status) {
   printf("%s: exit(%d)\n", thread_name(), status);
   thread_exit();
 }
-
+static int get_user (const uint8_t *uaddr) {
+  int result;
+  asm ("movl $1f, %0; movzbl %1, %0; 1:"
+       : "=&a" (result) : "m" (*uaddr));
+  return result;
+}
+static void check_ptr2(const void *vaddr) {
+  if (!is_user_vaddr(vaddr)) terminate_with_status(-1);
+  void *ptr = pagedir_get_page(thread_current()->pagedir, vaddr);
+  if (!ptr) terminate_with_status(-1);
+  const uint8_t *check_byteptr = (const uint8_t *)vaddr;
+  for (int i = 0; i < 4; ++i) {
+    if (get_user(check_byteptr + i) == -1)
+      terminate_with_status(-1);
+  }
+}
 // Helper functions for checking user memory
-static void check_address(const void *addr) {
-  if (!is_user_vaddr(addr) || pagedir_get_page(thread_current()->pagedir, addr) == NULL) {
+void check_address(const void *addr) {
+  if (addr == NULL || !is_user_vaddr(addr)) terminate_with_status(-1);
+
+  void *page = pagedir_get_page(thread_current()->pagedir, addr);
+  if (page == NULL) {
     terminate_with_status(-1);
   }
 }
 
+
 static void check_string(const char *str) {
-  while (true) {
-    check_address(str); // 確保這個 byte 所在的 page 是 mapped
-    if (*str == '\0') break;
-    str++;
+  for (int i = 0; i < 4096; ++i) { // 最多查一整頁，避免無窮 loop
+    check_address(str + i);  // 檢查每個位址合法
+    if (str[i] == '\0') return;
   }
+  terminate_with_status(-1); // 超過最大長度還沒結束字串
 }
 
 
@@ -60,15 +81,11 @@ static void check_buffer(void *buffer, unsigned size) {
   uint8_t *start = (uint8_t *)buffer;
   uint8_t *end = start + size;
 
-  for (uint8_t *ptr = start; ptr < end; ptr += PGSIZE) {
+  for (uint8_t *ptr = start; ptr < end; ptr++) {
     check_address(ptr);
   }
-  if (end != start)
-    check_address(end - 1);
+
 }
-
-
-
 
 static void (*syscalls[MAX_SYSCALL])(struct intr_frame *) = {
   [SYS_HALT] = sys_halt,
@@ -89,9 +106,10 @@ static void (*syscalls[MAX_SYSCALL])(struct intr_frame *) = {
 static void syscall_handler (struct intr_frame *f) {
   check_address(f->esp);
   check_address((int *)f->esp);  // Also ensure we can safely dereference syscall number
+  int *p = f->esp;
+  check_ptr2(p + 1);  // 確保 syscall number 是有效 user 指標
 
   int syscall_number = *(int*)(f->esp);
-	// printf("syscall nu: %d\n", syscall_number);
   if (syscall_number >= 0 && syscall_number < MAX_SYSCALL && syscalls[syscall_number]) {
     syscalls[syscall_number](f);
   } else {
@@ -122,15 +140,15 @@ void sys_exit(struct intr_frame *f) {
 
 
 void sys_write(struct intr_frame *f) {
-  int *esp = (int *)f->esp;
-  check_address(&esp[1]);
-  check_address(&esp[2]);
-  check_address(&esp[3]);
+  check_address(f->esp + 4);  // fd
+  check_address(f->esp + 8);  // buffer
+  check_address(f->esp + 12); // size
+  
 
-  int fd = esp[1];
-  const char *buffer = (const char *)esp[2];
-  unsigned size = (unsigned)esp[3];
-
+  int fd = *(int *)(f->esp + 4);
+  const char *buffer = *(const char **)(f->esp + 8);
+  unsigned size = *(unsigned *)(f->esp + 12);
+  
   check_buffer((void *)buffer, size);
 
   if (fd == 1) {
@@ -153,15 +171,23 @@ void sys_write(struct intr_frame *f) {
 }
 
 
+void sys_exec(struct intr_frame *f) {
+  void *arg_ptr;
 
-void sys_exec(struct intr_frame* f) {
-  check_address(f->esp + 4);                          // 檢查參數指標
-  char *cmd_ptr = *(char **)(f->esp + 4);             // 解參考
-  check_address(cmd_ptr);                             // 檢查指向的內容
-  check_string(cmd_ptr);                              // 確保是合法字串
-  f->eax = process_execute(cmd_ptr);                  // 呼叫 exec
-  
+  // 第一步：檢查 f->esp + 4 本身是否合法
+  check_address(f->esp + 4);                           
+
+  // 第二步：解出 user 傳來的指標（要再檢查這個指標本身）
+  arg_ptr = *(void **)(f->esp + 4);                    
+
+  // 第三步：檢查這個指標指向的記憶體區段是否合法
+  check_address(arg_ptr);                             
+  check_string((char *)arg_ptr);                      
+
+  // 最後呼叫執行
+  f->eax = process_execute((char *)arg_ptr);
 }
+
 
 void sys_wait(struct intr_frame* f) {
   check_address(f->esp + 4);
@@ -170,14 +196,16 @@ void sys_wait(struct intr_frame* f) {
 }
 
 void sys_read(struct intr_frame *f) {
-  int *esp = (int *)f->esp;
-  check_address(&esp[1]); // fd
-  check_address(&esp[2]); // buffer
-  check_address(&esp[3]); // size
 
-  int fd = esp[1];
-  void *buffer = (void *)esp[2];
-  unsigned size = (unsigned)esp[3];
+  check_address(f->esp + 4);  // fd
+  check_address(f->esp + 8);  // buffer
+  check_address(f->esp + 12); // size
+    
+  
+  
+  int fd = *(int *)(f->esp + 4);
+  void *buffer = *(void **)(f->esp + 8);
+  unsigned size = *(unsigned *)(f->esp + 12);
 
   check_buffer(buffer, size);
 
@@ -243,11 +271,11 @@ int allocate_fd(struct file *file) {
 }
 
 void sys_open(struct intr_frame *f) {
-  int *esp = (int *)f->esp;
-  check_address(&esp[1]);
-  check_address(&esp[2]);
-  check_address(&esp[3]);
-  const char *filename = (const char *)esp[1];
+  check_address(f->esp + 4);  // fd
+  check_address(f->esp + 8);  // buffer
+  check_address(f->esp + 12); // size
+  
+  const char *filename = *(const char **)(f->esp + 4);
   check_string(filename);
 
   struct file *file = filesys_open(filename);
@@ -262,18 +290,17 @@ void sys_open(struct intr_frame *f) {
     f->eax = -1;  
     return;
   }
-  // printf("[debug] open: fd = %d, file = %p, filename = %s\n", fd, file, filename);  // ✅ fd 現在是合法的變數了
 
   f->eax = fd;
 }
 
 
 void sys_close(struct intr_frame *f) {
-  int *esp = (int *)f->esp;
-  check_address(&esp[1]);
-  check_address(&esp[2]);
-  check_address(&esp[3]);
-  int fd = esp[1];
+  check_address(f->esp + 4);  // fd
+  check_address(f->esp + 8);  // buffer
+  check_address(f->esp + 12); // size
+  
+  int fd = *(int *)(f->esp + 4);
 
   if (fd < 2 || fd >= MAX_FD) {
     return;
@@ -289,11 +316,11 @@ void sys_close(struct intr_frame *f) {
 
 
 void sys_filesize(struct intr_frame *f) {
-  int *esp = (int *)f->esp;
-  check_address(&esp[1]);
-  check_address(&esp[2]);
-  check_address(&esp[3]);
-  int fd = esp[1];
+  check_address(f->esp + 4);  // fd
+  check_address(f->esp + 8);  // buffer
+  check_address(f->esp + 12); // size
+  
+  int fd = *(int *)(f->esp + 4);
 
   struct file *file = thread_current()->fd_table[fd];
   if (file == NULL) {
@@ -304,12 +331,12 @@ void sys_filesize(struct intr_frame *f) {
 }
 
 void sys_seek(struct intr_frame *f) {
-  int *esp = (int *)f->esp;
-  check_address(&esp[1]);
-  check_address(&esp[2]);
-  check_address(&esp[3]);
-  int fd = esp[1];
-  unsigned position = (unsigned)esp[2];
+  check_address(f->esp + 4);  // fd
+  check_address(f->esp + 8);  // buffer
+  check_address(f->esp + 12); // size
+  
+  int fd = *(int *)(f->esp + 4);
+  unsigned position = *(unsigned *)(f->esp + 8);
 
   struct file *file = thread_current()->fd_table[fd];
   if (file != NULL) {
@@ -318,11 +345,11 @@ void sys_seek(struct intr_frame *f) {
 }
 
 void sys_tell(struct intr_frame *f) {
-  int *esp = (int *)f->esp;
-  check_address(&esp[1]);
-  check_address(&esp[2]);
-  check_address(&esp[3]);
-  int fd = esp[1];
+  check_address(f->esp + 4);  // fd
+  check_address(f->esp + 8);  // buffer
+  check_address(f->esp + 12); // size
+  
+  int fd = *(int *)(f->esp + 4);
 
   struct file *file = thread_current()->fd_table[fd];
   if (file == NULL) {
