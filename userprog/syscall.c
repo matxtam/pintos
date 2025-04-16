@@ -47,7 +47,7 @@ static int get_user (const uint8_t *uaddr) {
        : "=&a" (result) : "m" (*uaddr));
   return result;
 }
-static void check_ptr2(const void *vaddr) {
+static void check_pointer(const void *vaddr) {
   if (!is_user_vaddr(vaddr)) terminate_with_status(-1);
   void *ptr = pagedir_get_page(thread_current()->pagedir, vaddr);
   if (!ptr) terminate_with_status(-1);
@@ -107,7 +107,7 @@ static void syscall_handler (struct intr_frame *f) {
   check_address(f->esp);
   check_address((int *)f->esp);  // Also ensure we can safely dereference syscall number
   int *p = f->esp;
-  check_ptr2(p + 1);  // 確保 syscall number 是有效 user 指標
+  check_pointer(p + 1);  // 確保 syscall number 是有效 user 指標
 
   int syscall_number = *(int*)(f->esp);
   if (syscall_number >= 0 && syscall_number < MAX_SYSCALL && syscalls[syscall_number]) {
