@@ -134,7 +134,9 @@ main (void)
 
   /* Finish up. */
   shutdown ();
+#ifdef FILESYS
   filesys_done();
+#endif
 
   thread_exit ();
 }

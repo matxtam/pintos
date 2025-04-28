@@ -172,4 +172,7 @@ int thread_get_load_avg (void);
 void filesys_lock_acquire (void);
 void filesys_lock_release (void);
 
+/* lab02: threads */
+bool compare_priority (const struct list_elem *, const struct list_elem *, void *);
+
 #endif /* threads/thread.h */
