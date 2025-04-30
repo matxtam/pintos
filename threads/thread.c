@@ -361,9 +361,16 @@ thread_foreach (thread_action_func *func, void *aux)
 void
 thread_set_priority (int new_priority) 
 {
-  thread_current ()->priority = new_priority;
-  thread_current ()->priority_orig = new_priority;
-	priority_check();
+	struct thread *cur = thread_current();
+	int old_priority = cur->priority;
+  cur->priority = new_priority;
+  cur->priority_orig = new_priority;
+
+	// if lowering priority
+	if(new_priority < old_priority){
+		if(!list_empty(&cur->donors))cur->priority = old_priority;
+		priority_check();
+	}
 }
 
 /* Returns the current thread's priority. */
