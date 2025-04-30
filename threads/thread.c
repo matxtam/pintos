@@ -494,6 +494,9 @@ init_thread (struct thread *t, const char *name, int priority)
 	list_init(&t->child_list);
 	t->exit_status = UINT32_MAX;
 
+	// lab02: donation
+	list_init(&t->donors);
+
   old_level = intr_disable ();
   list_push_back (&all_list, &t->allelem);
   intr_set_level (old_level);
@@ -642,7 +645,6 @@ priority_compare (const struct list_elem *a,
 	if(t_a->priority > t_b->priority) return true;
 	else return false;
 }
-
 
 /* priority_check:
  * if highest ready thread has smaller priority, yield.  */

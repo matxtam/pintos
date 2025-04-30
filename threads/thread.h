@@ -133,6 +133,10 @@ struct thread {
 
 	 /* implementation of lab02 */
 	 int priority_orig;
+	 struct lock *lock_acquiring;
+	 struct list donors;
+	 struct list_elem elem_as_a_donor;
+
   };
 
 /* If false (default), use round-robin scheduler.

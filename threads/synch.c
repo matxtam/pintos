@@ -118,7 +118,6 @@ sema_up (struct semaphore *sema)
 		list_sort(&sema->waiters, (list_less_func *)priority_compare, NULL);
     thread_unblock (list_entry (list_pop_front (&sema->waiters),
                                 struct thread, elem));
-		// lab02
 
 	}
   sema->value++;
@@ -205,8 +204,12 @@ lock_acquire (struct lock *lock)
 	// priority donation
 	if(lock->holder != NULL){
 		struct thread* cur = thread_current();
-		if (cur->priority > lock->holder->priority){
-			lock->holder->priority = cur->priority;
+		cur->lock_acquiring = lock;
+		// if cur's priority is larger, add to donor list
+		if (cur->priority > lock->holder->priority_orig){
+			list_insert_ordered(&lock->holder->donors, &cur->elem_as_a_donor, (list_less_func *)priority_compare, NULL);
+			struct thread *max_donor = list_entry(list_front(&lock->holder->donors), struct thread, elem_as_a_donor);
+			lock->holder->priority = max_donor->priority;
 		}
 	}
 
@@ -248,7 +251,25 @@ lock_release (struct lock *lock)
 
 	// priority donation recovery
 	struct thread *cur = thread_current();
-	cur->priority = cur->priority_orig;
+
+	// remove donors of this lock
+	struct list_elem *e = list_begin(&cur->donors);
+  while (e != list_end(&cur->donors)) {
+    struct thread *t = list_entry(e, struct thread, elem_as_a_donor);
+    if (t->lock_acquiring == lock) {
+      e = list_remove(e);
+    } else {
+      e = list_next(e);
+    }
+  }
+	
+	// find the max .
+	if(!list_empty(&cur->donors)){
+		struct thread *max_donor = list_entry(list_front(&cur->donors), struct thread, elem_as_a_donor);
+		cur->priority = max_donor->priority;
+	} else {
+		cur->priority = cur->priority_orig;
+	}
 
   lock->holder = NULL;
   sema_up (&lock->semaphore);
