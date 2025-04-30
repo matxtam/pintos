@@ -205,11 +205,21 @@ lock_acquire (struct lock *lock)
 	if(lock->holder != NULL){
 		struct thread* cur = thread_current();
 		cur->lock_acquiring = lock;
+
 		// if cur's priority is larger, add to donor list
 		if (cur->priority > lock->holder->priority_orig){
 			list_insert_ordered(&lock->holder->donors, &cur->elem_as_a_donor, (list_less_func *)priority_compare, NULL);
 			struct thread *max_donor = list_entry(list_front(&lock->holder->donors), struct thread, elem_as_a_donor);
-			lock->holder->priority = max_donor->priority;
+
+			// donate along the chain
+			int depth = 0;
+			struct thread *nxt = lock->holder;
+			while(nxt != NULL && depth < 8){
+				nxt->priority = max_donor->priority;
+				if(nxt->lock_acquiring)nxt = nxt->lock_acquiring->holder;
+				else nxt = NULL;
+				depth++;
+			}
 		}
 	}
 
@@ -258,12 +268,13 @@ lock_release (struct lock *lock)
     struct thread *t = list_entry(e, struct thread, elem_as_a_donor);
     if (t->lock_acquiring == lock) {
       e = list_remove(e);
+			t->lock_acquiring = NULL;
     } else {
       e = list_next(e);
     }
   }
 	
-	// find the max .
+	// find the max donor.
 	if(!list_empty(&cur->donors)){
 		struct thread *max_donor = list_entry(list_front(&cur->donors), struct thread, elem_as_a_donor);
 		cur->priority = max_donor->priority;

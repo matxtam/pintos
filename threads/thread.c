@@ -197,6 +197,9 @@ thread_create (const char *name, int priority,
 	t->tchild->exit_status = UINT32_MAX;
 	t->tchild->isRunning = false;
 
+	// lab2: donation
+	t->lock_acquiring = NULL;
+
   /* Stack frame for kernel_thread(). */
   kf = alloc_frame (t, sizeof *kf);
   kf->eip = NULL;
