@@ -173,6 +173,7 @@ void filesys_lock_acquire (void);
 void filesys_lock_release (void);
 
 /* lab02: threads */
-bool compare_priority (const struct list_elem *, const struct list_elem *, void *);
+bool priority_compare (const struct list_elem *, const struct list_elem *, void *);
+void priority_check (void);
 
 #endif /* threads/thread.h */

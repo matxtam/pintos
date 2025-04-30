@@ -215,6 +215,8 @@ thread_create (const char *name, int priority,
   /* Add to run queue. */
   thread_unblock (t);
 
+	priority_check();
+
   return tid;
 }
 
@@ -252,7 +254,7 @@ thread_unblock (struct thread *t)
   old_level = intr_disable ();
   ASSERT (t->status == THREAD_BLOCKED);
   // list_push_back (&ready_list, &t->elem);
-	list_insert_ordered(&ready_list, &t->elem, (list_less_func *)compare_priority, NULL);
+	list_insert_ordered(&ready_list, &t->elem, (list_less_func *)priority_compare, NULL);
   t->status = THREAD_READY;
   intr_set_level (old_level);
 }
@@ -316,22 +318,6 @@ thread_exit (void)
 }
 
 
-/* compare_priority is of type list_less_func from lib/kernel/list.h
-   Returns true if A is less than B
-   false if A is greater than or equal to B. */
-
-bool
-compare_priority (const struct list_elem *a,
-                  const struct list_elem *b,
-                  void *aux){
-	struct thread *t_a = list_entry (a, struct thread, elem);
-	struct thread *t_b = list_entry (b, struct thread, elem);
-	if(t_a->priority > t_b->priority) return true;
-	else return false;
-}
-
-
-
 /* Yields the CPU.  The current thread is not put to sleep and
    may be scheduled again immediately at the scheduler's whim. */
 void
@@ -345,7 +331,7 @@ thread_yield (void)
   old_level = intr_disable ();
   if (cur != idle_thread) 
     // list_push_back (&ready_list, &cur->elem);
-		list_insert_ordered(&ready_list, &cur->elem, (list_less_func *)compare_priority, NULL);
+		list_insert_ordered(&ready_list, &cur->elem, (list_less_func *)priority_compare, NULL);
   cur->status = THREAD_READY;
   schedule ();
   intr_set_level (old_level);
@@ -373,15 +359,7 @@ void
 thread_set_priority (int new_priority) 
 {
   thread_current ()->priority = new_priority;
-
-	// if highest ready thread has smaller priority, yield.
-	if (!list_empty(&ready_list)) {
-    struct thread *highest_ready = list_entry(list_front(&ready_list), struct thread, elem);
-    if (highest_ready->priority > thread_current()->priority) {
-      thread_yield();
-    }
-	}
-	
+	priority_check();
 }
 
 /* Returns the current thread's priority. */
@@ -646,3 +624,34 @@ filesys_lock_release ()
 {
 	lock_release (&filesys_lock);
 }
+
+/* =================== lab02 =================== */
+
+/* priority_compare is of type list_less_func from lib/kernel/list.h
+   Returns true if A is less than B
+   false if A is greater than or equal to B. */
+
+bool
+priority_compare (const struct list_elem *a,
+                  const struct list_elem *b,
+                  void *aux){
+	struct thread *t_a = list_entry (a, struct thread, elem);
+	struct thread *t_b = list_entry (b, struct thread, elem);
+	if(t_a->priority > t_b->priority) return true;
+	else return false;
+}
+
+
+/* priority_check:
+ * if highest ready thread has smaller priority, yield.  */
+void
+priority_check(void) {
+	if (!list_empty(&ready_list)) {
+    struct thread *highest_ready = list_entry(list_front(&ready_list), struct thread, elem);
+    if (highest_ready->priority > thread_current()->priority) {
+      thread_yield();
+    }
+	}
+}
+
+
