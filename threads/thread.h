@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <threads/synch.h>
+#include <threads/fixed-point.h>
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -136,6 +137,9 @@ struct thread {
 	 struct lock *lock_acquiring;
 	 struct list donors;
 	 struct list_elem elem_as_a_donor;
+
+	 int nice;
+	 fp recent_cpu;
 
   };
 

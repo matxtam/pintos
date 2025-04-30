@@ -12,6 +12,7 @@
 #include "threads/switch.h"
 #include "threads/synch.h"
 #include "threads/vaddr.h"
+#include "threads/fixed-point.h"
 #ifdef USERPROG
 #include "userprog/process.h"
 #endif
@@ -62,6 +63,7 @@ static unsigned thread_ticks;   /* # of timer ticks since last yield. */
    If true, use multi-level feedback queue scheduler.
    Controlled by kernel command-line option "-o mlfqs". */
 bool thread_mlfqs;
+fp load_avg;
 
 static void kernel_thread (thread_func *, void *aux);
 
@@ -105,6 +107,9 @@ thread_init (void)
   init_thread (initial_thread, "main", PRI_DEFAULT);
   initial_thread->status = THREAD_RUNNING;
   initial_thread->tid = allocate_tid ();
+
+
+	load_avg = 0;
 }
 
 /* Starts preemptive thread scheduling by enabling interrupts.
@@ -382,33 +387,38 @@ thread_get_priority (void)
 
 /* Sets the current thread's nice value to NICE. */
 void
-thread_set_nice (int nice UNUSED) 
+thread_set_nice (int nice)
 {
-  /* Not yet implemented. */
+	struct thread *cur = thread_current();
+	cur->nice = nice;
+	int new_priority = PRI_MAX - FP_2_INT_NEAREST(FP_INT_ADD(FP_INT_DIV(cur->recent_cpu, 4), 2*cur->nice));
+	cur->priority = new_priority;
+	priority_check();
 }
 
 /* Returns the current thread's nice value. */
 int
 thread_get_nice (void) 
 {
-  /* Not yet implemented. */
-  return 0;
+  return thread_current()->nice;
 }
 
 /* Returns 100 times the system load average. */
 int
 thread_get_load_avg (void) 
 {
-  /* Not yet implemented. */
-  return 0;
+	int ready_threads = (int)list_size(&ready_list);
+	fp right = FP_INT_DIV(INT_2_FP(ready_threads), 60);
+	fp left  = FP_INT_MUL(FP_INT_DIV(load_avg, 60), 59);
+	fp new_load_avg = FP_ADD(left, right);
+  return FP_2_INT_NEAREST(FP_INT_MUL(new_load_avg, 100));
 }
 
 /* Returns 100 times the current thread's recent_cpu value. */
 int
 thread_get_recent_cpu (void) 
 {
-  /* Not yet implemented. */
-  return 0;
+  return FP_2_INT_NEAREST(FP_INT_MUL(thread_current()->recent_cpu, 100));
 }
 
 /* Idle thread.  Executes when no other thread is ready to run.
@@ -506,6 +516,10 @@ init_thread (struct thread *t, const char *name, int priority)
 
 	// lab02: donation
 	list_init(&t->donors);
+
+	// lab02: mlfqs
+	t->nice = 0;
+	t->recent_cpu = 0;
 
   old_level = intr_disable ();
   list_push_back (&all_list, &t->allelem);
