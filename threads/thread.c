@@ -359,6 +359,7 @@ void
 thread_set_priority (int new_priority) 
 {
   thread_current ()->priority = new_priority;
+  thread_current ()->priority_orig = new_priority;
 	priority_check();
 }
 
@@ -486,6 +487,7 @@ init_thread (struct thread *t, const char *name, int priority)
   strlcpy (t->name, name, sizeof t->name);
   t->stack = (uint8_t *) t + PGSIZE;
   t->priority = priority;
+	t->priority_orig = priority; // lab02
   t->magic = THREAD_MAGIC;
 
 	// lab01: child list init

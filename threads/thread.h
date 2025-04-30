@@ -130,6 +130,9 @@ struct thread {
    struct list files;   // list of struct thread_file
    int file_fd;         // 用於分配新的 fd
    struct file * file_owned;           /* The file opened */
+
+	 /* implementation of lab02 */
+	 int priority_orig;
   };
 
 /* If false (default), use round-robin scheduler.
