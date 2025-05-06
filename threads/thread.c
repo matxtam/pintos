@@ -54,6 +54,7 @@ struct kernel_thread_frame
 static long long idle_ticks;    /* # of timer ticks spent idle. */
 static long long kernel_ticks;  /* # of timer ticks in kernel threads. */
 static long long user_ticks;    /* # of timer ticks in user programs. */
+static int fourth_tick;
 
 /* Scheduling. */
 #define TIME_SLICE 4            /* # of timer ticks to give each thread. */
@@ -109,7 +110,7 @@ thread_init (void)
   initial_thread->tid = allocate_tid ();
 
 
-	load_avg = 0;
+	load_avg = INT_2_FP(0);
 }
 
 /* Starts preemptive thread scheduling by enabling interrupts.
@@ -145,6 +146,31 @@ thread_tick (void)
 #endif
   else
     kernel_ticks++;
+
+	// lab02: mlfqs
+	if(mlfqs){
+		fourth_tick++;
+
+		// for the current runing thread
+		struct thread *cur = thread_current();
+		if (cur != idle_thread){
+			cur->recent_cpu = FP_INT_ADD(cur->recent_cpu, 1);
+		}
+		// for every thread
+		struct list_elem *e;
+		for (e = list_begin(&all_list); e != list_end(&all_list); e = list_next(e)) {
+		  struct thread *t = list_entry(e, struct thread, allelem);
+			if(fourth_tick == 4){ // fourth tick
+				mqfls_calc_priority(t);
+				fourth_tick = 0;
+			}
+			mqfls_calc_recent_cpu(t);
+		}
+		// global
+		mqfls_calc_load_avg();
+		
+	}
+
 
   /* Enforce preemption. */
   if (++thread_ticks >= TIME_SLICE)
@@ -204,6 +230,15 @@ thread_create (const char *name, int priority,
 
 	// lab2: donation
 	t->lock_acquiring = NULL;
+
+	// lab2: init priority
+	if (thread_mlfqs){
+		t->nice = thread_create()->nice;
+		t->recent_cpu = thread_create()->recent_cpu;
+		mqfls_calc_priority(t);
+	}
+
+	
 
   /* Stack frame for kernel_thread(). */
   kf = alloc_frame (t, sizeof *kf);
@@ -366,15 +401,17 @@ thread_foreach (thread_action_func *func, void *aux)
 void
 thread_set_priority (int new_priority) 
 {
-	struct thread *cur = thread_current();
-	int old_priority = cur->priority;
-  cur->priority = new_priority;
-  cur->priority_orig = new_priority;
+	if(!mlfqs){
+		struct thread *cur = thread_current();
+		int old_priority = cur->priority;
+		cur->priority = new_priority;
+		cur->priority_orig = new_priority;
 
-	// if lowering priority
-	if(new_priority < old_priority){
-		if(!list_empty(&cur->donors))cur->priority = old_priority;
-		priority_check();
+		// if lowering priority
+		if(new_priority < old_priority){
+			if(!list_empty(&cur->donors))cur->priority = old_priority;
+			priority_check();
+		}
 	}
 }
 
@@ -407,11 +444,7 @@ thread_get_nice (void)
 int
 thread_get_load_avg (void) 
 {
-	int ready_threads = (int)list_size(&ready_list);
-	fp right = FP_INT_DIV(INT_2_FP(ready_threads), 60);
-	fp left  = FP_INT_MUL(FP_INT_DIV(load_avg, 60), 59);
-	fp new_load_avg = FP_ADD(left, right);
-  return FP_2_INT_NEAREST(FP_INT_MUL(new_load_avg, 100));
+  return FP_2_INT_NEAREST(FP_INT_MUL(load_avg, 100));
 }
 
 /* Returns 100 times the current thread's recent_cpu value. */
@@ -682,4 +715,27 @@ priority_check(void) {
 	}
 }
 
+void
+mqfls_calc_priority(struct thread *t){
+	int new_priority = FP_2_INT_NEAREST(FP_INT_ADD(FP_INT_DIV(t->recent_cpu, -4), PRI_MAX - t->nice*2));
+	t->priority = new_priority;
+}
+
+void
+mqfls_calc_recent_cpu(struct thread *t){
+	// recent_cpu = (2*load_avg)/(2*load_avg + 1) * recent_cpu + nice
+	fp para = FP_DIV(
+			FP_INT_MUL(load_avg, 2), 
+			FP_INT_ADD(FP_INT_MUL(load_avg, 2), 1));
+	t->recent_cpu = FP_INT_ADD(FP_MUL(para, t->recent_cpu), t->nice);
+}
+
+void
+mqfls_calc_load_avg(void){
+	int ready_threads = (int)list_size(&ready_list);
+	fp right = FP_INT_DIV(INT_2_FP(ready_threads), 60);
+	fp left  = FP_INT_MUL(FP_INT_DIV(load_avg, 60), 59);
+	fp new_load_avg = FP_ADD(left, right);
+	load_avg = new_load_avg;
+}
 
