@@ -148,7 +148,7 @@ thread_tick (void)
     kernel_ticks++;
 
 	// lab02: mlfqs
-	if(mlfqs){
+	if(thread_mlfqs){
 		fourth_tick++;
 
 		// for the current runing thread
@@ -233,8 +233,8 @@ thread_create (const char *name, int priority,
 
 	// lab2: init priority
 	if (thread_mlfqs){
-		t->nice = thread_create()->nice;
-		t->recent_cpu = thread_create()->recent_cpu;
+		t->nice = thread_current()->nice;
+		t->recent_cpu = thread_current()->recent_cpu;
 		mqfls_calc_priority(t);
 	}
 
@@ -401,7 +401,7 @@ thread_foreach (thread_action_func *func, void *aux)
 void
 thread_set_priority (int new_priority) 
 {
-	if(!mlfqs){
+	if(!thread_mlfqs){
 		struct thread *cur = thread_current();
 		int old_priority = cur->priority;
 		cur->priority = new_priority;
