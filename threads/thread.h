@@ -132,15 +132,18 @@ struct thread {
    int file_fd;         // 用於分配新的 fd
    struct file * file_owned;           /* The file opened */
 
-	 /* implementation of lab02 */
-	 int priority_orig;
-	 struct lock *lock_acquiring;
-	 struct list donors;
-	 struct list_elem elem_as_a_donor;
+   /* implementation of lab02 */
+   int priority_orig;
+   struct lock *lock_acquiring;
+   struct list donors;
+   struct list_elem elem_as_a_donor;
 
-	 int nice;
-	 fp recent_cpu;
+   int nice;
+   fp recent_cpu;
 
+   /* lab02 alarm clock */
+   int64_t wakeup_ticks;         /* 鬧鐘：要被喚醒的 tick 時間 */
+   struct list_elem timer_elem;  /* 加入 timer.c 的 sleeping_list 用 */
   };
 
 /* If false (default), use round-robin scheduler.
