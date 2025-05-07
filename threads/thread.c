@@ -13,9 +13,17 @@
 #include "threads/synch.h"
 #include "threads/vaddr.h"
 #include "threads/fixed-point.h"
+#include "devices/timer.h"   /* for timer_ticks() */ 
 #ifdef USERPROG
 #include "userprog/process.h"
-#endif
+#endif /* USERPROG */
+#include <stdlib.h>            /* for malloc */
+#include "devices/timer.h"      /* for timer_ticks() */
+
+/* prototypes for MLFQS helper functions */
+static void mqfls_calc_load_avg (void);
+static void mqfls_calc_recent_cpu (struct thread *t);
+static void mqfls_calc_priority   (struct thread *t);
 
 /* Random value for struct thread's `magic' member.
    Used to detect stack overflow.  See the big comment at the top
@@ -132,12 +140,13 @@ thread_start (void)
 
 /* Called by the timer interrupt handler at each timer tick.
    Thus, this function runs in an external interrupt context. */
+/* Called by the timer interrupt handler at each timer tick. */
 void
 thread_tick (void) 
 {
   struct thread *t = thread_current ();
 
-  /* Update statistics. */
+  /* --- Update basic statistics --- */
   if (t == idle_thread)
     idle_ticks++;
 #ifdef USERPROG
@@ -147,35 +156,44 @@ thread_tick (void)
   else
     kernel_ticks++;
 
-	// lab02: mlfqs
-	if(thread_mlfqs){
-		fourth_tick++;
+  /* === lab02: Multi-Level Feedback Queue Scheduler (mlfqs) === */
+  if (thread_mlfqs) 
+    {
+      /* 1) 每 tick：running thread 的 recent_cpu +1 */
+      if (t != idle_thread)
+        t->recent_cpu = FP_INT_ADD (t->recent_cpu, 1); 
 
-		// for the current runing thread
-		struct thread *cur = thread_current();
-		if (cur != idle_thread){
-			cur->recent_cpu = FP_INT_ADD(cur->recent_cpu, 1);
-		}
-		// for every thread
-		struct list_elem *e;
-		for (e = list_begin(&all_list); e != list_end(&all_list); e = list_next(e)) {
-		  struct thread *t = list_entry(e, struct thread, allelem);
-			if(fourth_tick == 4){ // fourth tick
-				mqfls_calc_priority(t);
-				fourth_tick = 0;
-			}
-			mqfls_calc_recent_cpu(t);
-		}
-		// global
-		mqfls_calc_load_avg();
-		
-	}
+      /* 2) 每秒（每 TIMER_FREQ tick）更新 load_avg & 所有 threads 的 recent_cpu */
+      if (timer_ticks () % TIMER_FREQ == 0) 
+        {
+          mqfls_calc_load_avg ();
+          for (struct list_elem *e = list_begin (&all_list);
+               e != list_end (&all_list);
+               e = list_next (e)) 
+            {
+              struct thread *t2 = list_entry (e, struct thread, allelem);
+              mqfls_calc_recent_cpu (t2);
+            }
+        }
 
+      /* 3) 每 4 tick 更新所有 threads 的 priority */
+      if (timer_ticks () % 4 == 0) 
+        {
+          for (struct list_elem *e = list_begin (&all_list);
+               e != list_end (&all_list);
+               e = list_next (e)) 
+            {
+              struct thread *t2 = list_entry (e, struct thread, allelem);
+              mqfls_calc_priority (t2);
+            }
+        }
+    }
 
-  /* Enforce preemption. */
+  /* --- Enforce preemption --- */
   if (++thread_ticks >= TIME_SLICE)
     intr_yield_on_return ();
 }
+
 
 /* Prints thread statistics. */
 void
@@ -444,14 +462,15 @@ thread_get_nice (void)
 int
 thread_get_load_avg (void) 
 {
-  return FP_2_INT_NEAREST(FP_INT_MUL(load_avg, 100));
+  return FP_2_INT_NEAREST (FP_INT_MUL (load_avg, 100));
 }
 
 /* Returns 100 times the current thread's recent_cpu value. */
 int
 thread_get_recent_cpu (void) 
 {
-  return FP_2_INT_NEAREST(FP_INT_MUL(thread_current()->recent_cpu, 100));
+  return FP_2_INT_NEAREST (
+    FP_INT_MUL (thread_current ()->recent_cpu, 100));
 }
 
 /* Idle thread.  Executes when no other thread is ready to run.
@@ -705,37 +724,56 @@ priority_compare (const struct list_elem *a,
 
 /* priority_check:
  * if highest ready thread has smaller priority, yield.  */
+/* 如果有更高優先權的 ready thread，就立刻 yield */
 void
-priority_check(void) {
-	if (!list_empty(&ready_list)) {
-    struct thread *highest_ready = list_entry(list_front(&ready_list), struct thread, elem);
-    if (highest_ready->priority > thread_current()->priority) {
-      thread_yield();
-    }
-	}
+priority_check (void) {
+  if (!list_empty (&ready_list)) {
+    struct thread *high = list_entry (
+        list_front (&ready_list), struct thread, elem);
+    if (high->priority > thread_current ()->priority)
+      thread_yield ();
+  }
 }
 
+/* 更新一個 thread 的 priority = PRI_MAX - ⌊recent_cpu/4⌋ - (nice×2) */
 void
-mqfls_calc_priority(struct thread *t){
-	int new_priority = FP_2_INT_NEAREST(FP_INT_ADD(FP_INT_DIV(t->recent_cpu, -4), PRI_MAX - t->nice*2));
-	t->priority = new_priority;
+mqfls_calc_priority (struct thread *t) {
+  /* 先把 recent_cpu 除 4，並捨去小數 */
+  int recent = FP_2_INT_CUT ( FP_INT_DIV (t->recent_cpu, 4) );
+  int prio = PRI_MAX - recent - (t->nice * 2);
+  /* 邊界截斷 */
+  if (prio < PRI_MIN) prio = PRI_MIN;
+  if (prio > PRI_MAX) prio = PRI_MAX;
+  t->priority = prio;
 }
 
+/* 更新一個 thread 的 recent_cpu = (2·load_avg)/(2·load_avg+1)·recent_cpu + nice */
 void
-mqfls_calc_recent_cpu(struct thread *t){
-	// recent_cpu = (2*load_avg)/(2*load_avg + 1) * recent_cpu + nice
-	fp para = FP_DIV(
-			FP_INT_MUL(load_avg, 2), 
-			FP_INT_ADD(FP_INT_MUL(load_avg, 2), 1));
-	t->recent_cpu = FP_INT_ADD(FP_MUL(para, t->recent_cpu), t->nice);
+mqfls_calc_recent_cpu (struct thread *t) {
+  /* coeff = (2*load_avg)/(2*load_avg + 1) */
+  fp coeff = FP_DIV (
+                FP_INT_MUL (load_avg, 2), 
+                FP_INT_ADD ( FP_INT_MUL (load_avg, 2), 1 )
+              );
+  /* recent_cpu = coeff*old_cpu + nice */
+  t->recent_cpu = FP_INT_ADD ( FP_MUL (coeff, t->recent_cpu),
+                               t->nice );
 }
 
+/* 更新全域 load_avg = (59/60)*load_avg + (1/60)*ready_threads */
 void
-mqfls_calc_load_avg(void){
-	int ready_threads = (int)list_size(&ready_list);
-	fp right = FP_INT_DIV(INT_2_FP(ready_threads), 60);
-	fp left  = FP_INT_MUL(FP_INT_DIV(load_avg, 60), 59);
-	fp new_load_avg = FP_ADD(left, right);
-	load_avg = new_load_avg;
+mqfls_calc_load_avg (void) {
+  /* ready_threads = ready_list 長度 + （若當前不是 idle 就 +1） */
+  int ready_threads = list_size (&ready_list);
+  if (thread_current () != idle_thread)
+    ready_threads++;
+
+  /* 
+     part1 = (59/60)*load_avg  ➔ 固定點➗整數
+     part2 = (1/60)*ready_threads  ➔ 整數➗整數後轉固定點
+  */
+  fp part1 = FP_INT_DIV ( FP_INT_MUL (load_avg, 59), 60 );
+  fp part2 = FP_INT_DIV ( INT_2_FP (ready_threads), 60 );
+  load_avg = FP_ADD (part1, part2);
 }
 
