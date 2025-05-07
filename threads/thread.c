@@ -159,11 +159,11 @@ thread_tick (void)
   /* === lab02: Multi-Level Feedback Queue Scheduler (mlfqs) === */
   if (thread_mlfqs) 
     {
-      /* 1) 每 tick：running thread 的 recent_cpu +1 */
+      /* every tick: running thread recent_cpu ++ */
       if (t != idle_thread)
         t->recent_cpu = FP_INT_ADD (t->recent_cpu, 1); 
 
-      /* 2) 每秒（每 TIMER_FREQ tick）更新 load_avg & 所有 threads 的 recent_cpu */
+      /* every second: update load_avg & 所有 threads 的 recent_cpu */
       if (timer_ticks () % TIMER_FREQ == 0) 
         {
           mqfls_calc_load_avg ();
@@ -176,7 +176,7 @@ thread_tick (void)
             }
         }
 
-      /* 3) 每 4 tick 更新所有 threads 的 priority */
+      /* every 4 tick: 更新所有 threads 的 priority */
       if (timer_ticks () % 4 == 0) 
         {
           for (struct list_elem *e = list_begin (&all_list);
@@ -723,8 +723,7 @@ priority_compare (const struct list_elem *a,
 }
 
 /* priority_check:
- * if highest ready thread has smaller priority, yield.  */
-/* 如果有更高優先權的 ready thread，就立刻 yield */
+ * if highest ready thread has higher priority, yield.  */
 void
 priority_check (void) {
   if (!list_empty (&ready_list)) {
@@ -738,10 +737,8 @@ priority_check (void) {
 /* 更新一個 thread 的 priority = PRI_MAX - ⌊recent_cpu/4⌋ - (nice×2) */
 void
 mqfls_calc_priority (struct thread *t) {
-  /* 先把 recent_cpu 除 4，並捨去小數 */
   int recent = FP_2_INT_CUT ( FP_INT_DIV (t->recent_cpu, 4) );
   int prio = PRI_MAX - recent - (t->nice * 2);
-  /* 邊界截斷 */
   if (prio < PRI_MIN) prio = PRI_MIN;
   if (prio > PRI_MAX) prio = PRI_MAX;
   t->priority = prio;
@@ -763,15 +760,10 @@ mqfls_calc_recent_cpu (struct thread *t) {
 /* 更新全域 load_avg = (59/60)*load_avg + (1/60)*ready_threads */
 void
 mqfls_calc_load_avg (void) {
-  /* ready_threads = ready_list 長度 + （若當前不是 idle 就 +1） */
   int ready_threads = list_size (&ready_list);
   if (thread_current () != idle_thread)
     ready_threads++;
 
-  /* 
-     part1 = (59/60)*load_avg  ➔ 固定點➗整數
-     part2 = (1/60)*ready_threads  ➔ 整數➗整數後轉固定點
-  */
   fp part1 = FP_INT_DIV ( FP_INT_MUL (load_avg, 59), 60 );
   fp part2 = FP_INT_DIV ( INT_2_FP (ready_threads), 60 );
   load_avg = FP_ADD (part1, part2);
